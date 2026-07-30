@@ -1,146 +1,96 @@
-# Agent Harnesses, with Deep Agents
+# Agent Harnesses — code companion
 
-A model on its own predicts text. Wrap it in a **harness** — durable state, tool execution,
-context management, feedback loops, enforceable constraints — and it becomes an agent that can
-sustain long, complex work. The shorthand for the whole chapter:
+Runnable companion code for the chapter. Seven scripts, all working the **same
+task against the same corpus**: produce a competitive brief on the vector search
+infrastructure market. Each script adds one layer of the harness, so the example
+compounds instead of restarting.
 
-> **Agent = Model + Harness**
+Everything here is self-contained — this folder does not depend on any other
+project.
 
-This project uses [LangChain **Deep Agents](https://blog.langchain.com/deep-agents/)** as one
-concrete harness. The headline idea is how *little* you write to get a capable agent: a single
-`create_deep_agent(model=model)` call already assembles a planning tool, a filesystem, subagent
-delegation, and a base system prompt. The rest of the chapter — and this repo — is a tour of the
-knobs on that one object.
+| Script | Section | What it shows |
+|---|---|---|
+| `00_react_baseline.py` | 1 | The task on a plain tool-calling agent, instrumented. It falls over. |
+| `01_stack.py`          | 3 | The harness *is* a middleware stack — read off the object. **No API calls.** |
+| `02_plan.py`           | 4 | `TodoListMiddleware`: the plan is structured state, not prose |
+| `03_files.py`          | 5 | `FilesystemMiddleware`: automatic offload past ~20k tokens, plus permissions |
+| `04_delegate.py`       | 6 | `SubAgentMiddleware`: what does and does not cross the boundary |
+| `05_prompt.py`         | 7 | A static prompt with an edge, then one assembled per turn |
+| `06_middleware.py`     | 8 | Write your own: a tool ledger and a budget guard |
 
-## The Big Idea
+`sources.py` is the fixed research corpus every script shares. Run it directly
+(`python sources.py`) to see what is in it and how big each source is.
 
-There is no formal definition of a "deep" agent, but in practice deep agents share four ideas.
-Each example below turns on exactly one of them, changing a single argument to the *same*
-`create_deep_agent` call from example 01.
+## Setup
 
-```mermaid
-graph TB
-    User([User task]) --> Agent
+You need Python 3.11–3.14 and an [OpenAI API key](https://platform.openai.com/api-keys).
+These steps use [uv](https://docs.astral.sh/uv/); a pip path is below.
 
-    subgraph Agent["create_deep_agent(model=model)"]
-        direction TB
-        Prompt["📝 System Prompt<br/>identity · scope · framework"]
-        Plan["🗺️ Planning Tool<br/>write_todos"]
-        Sub["👥 Subagents<br/>isolated context, own tools"]
-        FS["🗄️ Filesystem<br/>write/read/ls/glob/grep"]
-    end
-
-    Agent --> Answer([Result])
-
-    style User fill:#1e3a5f,stroke:#1e3a5f,color:#fff
-    style Answer fill:#1e3a5f,stroke:#1e3a5f,color:#fff
-    style Prompt fill:#e8eaf6,stroke:#5c6bc0,stroke-width:2px
-    style Plan fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px
-    style Sub fill:#e0f2f1,stroke:#00897b,stroke-width:2px
-    style FS fill:#fff3e0,stroke:#fb8c00,stroke-width:2px
-    style Agent fill:#fafafa,stroke:#bdbdbd,stroke-width:1px,stroke-dasharray: 5 5
-```
-
-
-
-Why these four? Long-horizon tasks fail from **context rot** — as iterations pile up, the context
-window fills with noise and the model degrades. Planning externalizes progress, subagents isolate
-work into separate contexts, the filesystem parks bulky artifacts off-context, and the system
-prompt keeps behavior coherent. Together they keep the loop recoverable as the task grows.
-
----
-
-
-
-## The Examples
-
-Each file is self-contained and runnable on its own. Read them in order — each one adds a single
-capability to the previous.
-
-
-| #   | File                                         | Capability              | Knob             | What to look for when you run it                                                               |
-| --- | -------------------------------------------- | ----------------------- | ---------------- | ---------------------------------------------------------------------------------------------- |
-| 01  | `[01_bare_agent.py](01_bare_agent.py)`       | The bare harness        | *(none)*         | A full answer from a one-line agent — you configured nothing.                                  |
-| 02  | `[02_planning_tool.py](02_planning_tool.py)` | Explicit planning       | *(built-in)*     | Printed todo lists evolving `[ ]` → `[~]` → `[x]` across steps.                                |
-| 03  | `[03_subagents.py](03_subagents.py)`         | Hierarchical delegation | `subagents=`     | The coordinator has no lookup tool; it delegates and only the subagent's final result returns. |
-| 04  | `[04_filesystem.py](04_filesystem.py)`       | Filesystem for state    | *(built-in)*     | The final answer **plus** a dump of `result["files"]` — artifacts kept off-context.            |
-| 05  | `[05_system_prompt.py](05_system_prompt.py)` | The system prompt       | `system_prompt=` | The same agent answers an in-scope question but declines an out-of-scope one.                  |
-
-
-
-
-### 01 · The bare deep agent
-
-`create_deep_agent(model=model)` and nothing else. Establishes the two things every later example
-reuses: the **invoke contract** (pass a message list, read the answer off the *last* message) and
-the fact that the planning tool, file tools, and delegation machinery are already on board.
-
-### 02 · The planning tool
-
-Same bare agent — the planning tool ships by default. Give it a multi-deliverable task and it calls
-the built-in `write_todos` tool, storing a structured list of items each with a `pending` /
-`in_progress` / `completed` status and rewriting it between steps. We read that list off the message
-history so you can watch the plan change.
-
-### 03 · Subagents
-
-Turn the `subagents=` knob. A coordinator delegates each topic lookup to a `fact-researcher`
-subagent that has its own system prompt and its own tool. The coordinator *can't* look things up
-itself — it must delegate through the built-in `task` tool, and it only ever sees the subagent's
-final sentence, never its intermediate steps. That's context isolation.
-
-### 04 · The filesystem
-
-The file tools ship by default too. The agent writes intermediate notes to a **virtual** filesystem
-(backed by agent state, not your real disk), reads them back, and composes a summary. Printing
-`result["files"]` reveals the artifacts it parked off-context — the filesystem acting as a *context
-engine*. In production you'd swap the backend and add path-based permissions; the interface is the
-same.
-
-### 05 · The system prompt
-
-Turn the `system_prompt=` knob. A scoped support-assistant prompt built from the chapter's five
-principles — clear identity/scope, empower-don't-constrain, a reasoning framework not a flowchart,
-heuristic boundaries, and language efficiency. It answers in-scope requests and declines
-out-of-scope ones.
-
----
-
-
-
-## Quick Start
+**1. Install uv**
 
 ```bash
-git checkout project/agent-harnesses
-uv sync
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# macOS (Homebrew):  brew install uv
+# Windows:  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Add your OpenAI key:
+**2. Add your API key**
 
 ```bash
 cp .env.example .env
-# then edit .env and set OPENAI_API_KEY=...
+# open .env and set OPENAI_API_KEY=...
 ```
 
-Run each example:
+**3. Install dependencies**
 
 ```bash
-uv run python 01_bare_agent.py
-uv run python 02_planning_tool.py
-uv run python 03_subagents.py
-uv run python 04_filesystem.py
-uv run python 05_system_prompt.py
+uv sync
 ```
 
+**4. Check it works**
 
+```bash
+uv run python 01_stack.py
+```
 
-## Prerequisites
+This one makes no model calls, so it confirms your install without spending
+anything.
 
-- **Python 3.11+** and `[uv](https://docs.astral.sh/uv/)`.
-- `OPENAI_API_KEY` in `.env`. The model lives in one place — `[models.py](models.py)` — so you
-can swap to a smaller OpenAI model or another provider by editing a single line.
-- **LangSmith API key** in `.env` (optional, for tracing).
+## Run a lab
 
-> Verified against `deepagents 0.6.8`. The built-in tools and base prompt are versioned
-> implementation details of the harness and evolve with the package.
+```bash
+uv run python 00_react_baseline.py
+uv run python 01_stack.py
+uv run python 02_plan.py
+uv run python 03_files.py
+uv run python 04_delegate.py
+uv run python 05_prompt.py
+uv run python 06_middleware.py
+```
 
+### Using pip instead of uv
+
+```bash
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python 01_stack.py
+```
+
+## Notes
+
+- **Changing the model.** Every script does `from models import model`.
+  `models.py` is the only place a model is named — edit that one line to switch
+  model or provider and every lab follows.
+- **The corpus is fictional.** The vendors, documents, and figures in
+  `sources.py` are invented. The market shape is realistic, but using made-up
+  companies means the chapter cannot misquote a real one or go stale.
+- **The numbers move.** Token counts and call counts in the chapter come from
+  real runs, but models are not deterministic — expect your figures to differ in
+  the details while the shape of the result holds.
+- **`00_react_baseline.py` is the expensive one.** It has no harness holding the
+  context down, which is the entire point; it re-sends a large transcript on
+  every turn.
+- **Tracing is optional.** To watch a run as a trace, set `LANGSMITH_TRACING=true`
+  and add `LANGSMITH_API_KEY` in `.env`.

@@ -1,0 +1,7 @@
+# For readers who prefer pip over uv:
+#   python -m venv .venv && source .venv/bin/activate   (Windows: .venv\Scripts\activate)
+#   pip install -r requirements.txt
+deepagents>=0.5.9
+langchain>=1.0.0,<2.0
+langchain-openai
+python-dotenv
