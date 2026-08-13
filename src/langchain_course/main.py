@@ -10,6 +10,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langsmith import traceable
 from .raw_fnc_calling import run_agent_raw_agent_loop
 
+
 MAX_ITERATIONS = 5
 MODEL = "nvidia/nemotron-nano-9b-v2:free"
 
@@ -120,7 +121,7 @@ def main():
     # result=run_agent("What is the price of a laptop after applying a gold discount?")
 
     # Raw Function calling using provider sdks
-    print("Hi Rover! Let's see what raw meat we are eating today Ha Ha Ha...")
+    print("Hi Rover! Let's see what raw prompt we are cooking today...")
     run_agent_raw_agent_loop(
         "What is the price of a headphones with a gold discount?"
     )
