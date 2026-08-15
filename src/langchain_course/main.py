@@ -1,127 +1,83 @@
 import os
 from dotenv import load_dotenv
+from langchain_pinecone import PineconeVectorStore
+from pathlib import Path
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
+from .embeddings import load_embedding
+from .llm import load_llm
 
 load_dotenv()
 
-from langchain.chat_models import init_chat_model
-from langchain.tools import tool
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+print("Initializing components...")
 
-from langsmith import traceable
-from .raw_fnc_calling import run_agent_raw_agent_loop
+embeddings = load_embedding()
 
+llm = load_llm()
 
-MAX_ITERATIONS = 5
-MODEL = "nvidia/nemotron-nano-9b-v2:free"
+vectorstore = PineconeVectorStore(index_name=os.environ['INDEX_NAME'], embedding=embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k":3})
 
-@tool
-def get_product_price(product: str) -> float:
+prompt_template = ChatPromptTemplate.from_template(
+"""
+Answer the question based on only the following context:
+{context}
+
+Question: {question}
+
+Provide a detailed answer:
+"""
+)
+
+def format_docs(docs):
+    """Format retrieved documents in a single string."""
+    return "\n\n".join(doc.page_content for doc in docs)
+
+def retrieval_chain_without_lcel(query: str):
     """
-        Look at the price of the product in the catalog.
+    Simple retrieval chain without LCEL(Lang Chain Expression Language).
+    Manually retrieves documents, formats them, and generates a response.
+
+    Limitations:
+    - Manual step-by-step execution
+    - No built-in streaming support
+    - No async support without additional code
+    - Harder to compose with other chains
+    - More verbose and error-prone
     """
-    print(f">> Fetching price of the product {product} ")
-    prices={"laptop":1244.45, "headphones": 540.51, "keyboard":25, "mouse":45.85}
-    return prices.get(product, 0)
+    # Step 1: Retrieve relevant documents
+    docs = retriever.invoke(query)
 
-@tool
-def apply_discount(price: float, discount_tier: str) -> float:
-    """ Apply a discount tier to the price and return the final price.
-        Available tiers: bronze, silver and gold.
-    """
-    print(f" Applying discount on price:{price} with discount_tier:{discount_tier}")
-    discount_percentages={"bronze": 3, "silver": 9, "gold": 27}
-    discount = discount_percentages.get(discount_tier, 0)
-    return round(price * (1 - discount/100), 2)
+    # Step 2: Format documents into context string
+    context = format_docs(docs)
 
-@traceable(name="LangChain Raw Agent Loop")
-def run_agent(question: str):
-    tools=[get_product_price, apply_discount]
-    tools_dict={t.name: t for t in tools}
+    # Step 3: Format the prompt with context and question
+    messages = prompt_template.format_messages(context=context, question=query)
 
-    print(f"Tools created: {tools_dict}")
+    # Step 4: Invoke LLM with the formatted messages
+    response = llm.invoke(messages)
 
-    print(f"Question: {question}")
-
-    llm=init_chat_model(
-            f"openai:{MODEL}",
-            temperature=0,
-            base_url="https://openrouter.ai/api/v1",
-            api_key=os.getenv("OPENROUTER_API_KEY"),
-        )
-    print("LLM initialized")
-
-    llm_with_tools=llm.bind_tools(tools)
-    print("Tools bound")
-    print("="*90)
-
-    messages=[
-        SystemMessage(
-            content=(
-                "You are a helpful shopping assistance."
-                "You have access to a catalog tool."
-                "and a discount tool.\n\n"
-                "STRICT RULES - You must follow these exactly:\n"
-                "1. NEVER guess or assume any product price. "
-                "You MUST call get_product_price first to get the real price.\n"
-                "2. ONLY call apply_discount AFTER you have received "
-                "a price from get_product_price. PASS the exact price.\n"
-                "returned by get_product_price - do NOT PASS a made-up number.\n"
-                "3. ALWAYS use apply_discount tool to calculate discount NEVER use math by yourself for calculating discount.\n"
-                "4. If user does not specify discount_tier, "
-                "ask them which tier to use - NEVER assume one by yourself."
-            ),
-        ),
-        HumanMessage(content=question)
-
-    ]
-
-    for iteration in range(1, MAX_ITERATIONS+1):
-        print(f"Iteration : ---- {iteration} ----")
-        ai_message=llm_with_tools.invoke(messages)
-
-        tool_calls = ai_message.tool_calls
-
-        if not tool_calls:
-            print(f"{ai_message.content}")
-            return ai_message.content
-
-
-        # Process only the FIRST Toll Call: Force one tool per iteration
-        tool_call=tool_calls[0]
-        tool_name=tool_call.get("name")
-        tool_args=tool_call.get("args", {})
-        tool_call_id=tool_call.get("id")
-
-        print(f"[Tool Selected]: {tool_name} with arguments {tool_args}")
-
-        tool_to_use = tools_dict.get(tool_name)
-
-        if tool_to_use is None:
-            raise ValueError(f"Tool '{tool_name}' not found.")
-
-        observation = tool_to_use.invoke(tool_args)
-
-        print(f"Tool Result: {observation}")    
-
-        messages.append(ai_message)
-        messages.append(ToolMessage(
-                content=str(observation), tool_call_id=tool_call_id
-            )
-        )
-
-    print("Error! Maxed out iterations.")
-    return None    
-
+    # Step 5: Return the content
+    return response.content
 
 
 def main():
-    #========== LanngChain Agent using tools
-    # print("Hello World here here look at the screen we are going to bind tools to our langchain agent!!!!")
-    # print()
-    # result=run_agent("What is the price of a laptop after applying a gold discount?")
+    print("Retrieving...")
+    query = "What is Pinecone in Machine Learning?"
 
-    # Raw Function calling using provider sdks
-    print("Hi Rover! Let's see what raw prompt we are cooking today...")
-    run_agent_raw_agent_loop(
-        "What is the price of a headphones with a gold discount?"
-    )
+    # ========================================================================
+    # Option 1: Use implementation WITHOUT LCEL
+    # ========================================================================
+    print("\n" + "=" * 70)
+    print("IMPLEMENTATION 1: Without LCEL")
+    print("=" * 70)
+    result_without_lcel = retrieval_chain_without_lcel(query)
+    print("\nAnswer:")
+    print(result_without_lcel)
+
+
+
+if __name__ == "__main__":
+    main()
