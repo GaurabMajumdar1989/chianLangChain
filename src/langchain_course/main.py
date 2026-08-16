@@ -4,7 +4,9 @@ from langchain_pinecone import PineconeVectorStore
 from pathlib import Path
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from operator import itemgetter
 
 from .embeddings import load_embedding
 from .llm import load_llm
@@ -35,6 +37,11 @@ def format_docs(docs):
     """Format retrieved documents in a single string."""
     return "\n\n".join(doc.page_content for doc in docs)
 
+
+# ========================================================================
+# Option 1: Use implementation WITHOUT LCEL
+# ========================================================================
+
 def retrieval_chain_without_lcel(query: str):
     """
     Simple retrieval chain without LCEL(Lang Chain Expression Language).
@@ -61,7 +68,34 @@ def retrieval_chain_without_lcel(query: str):
 
     # Step 5: Return the content
     return response.content
+# ========================================================================
+# Option 2: Use implementation WITH LCEL
+# ========================================================================
+def create_retrieval_chain_with_lcel():
+    """
+    Main funda is creating a composite Runnable from LangChain Runnables.
 
+    The normal function like `format_docs` is converted into a
+    `RunnableLambda` by the `|` pipe operator inside LCEL so it can
+    participate in Runnable composition.
+
+    `RunnablePassthrough.assign()` preserves the existing input and
+    augments it by adding the `context` key at runtime, whose value is
+    produced by the nested Runnable chain:
+    `itemgetter("question") | retriever | format_docs`.
+    """
+    retrieval_chain = (
+        RunnablePassthrough.assign(
+            context=itemgetter("question") 
+            | retriever 
+            | format_docs 
+        ) 
+        | prompt_template 
+        | llm 
+        | StrOutputParser()
+    )
+
+    return retrieval_chain
 
 def main():
     print("Retrieving...")
@@ -70,13 +104,24 @@ def main():
     # ========================================================================
     # Option 1: Use implementation WITHOUT LCEL
     # ========================================================================
-    print("\n" + "=" * 70)
-    print("IMPLEMENTATION 1: Without LCEL")
-    print("=" * 70)
-    result_without_lcel = retrieval_chain_without_lcel(query)
-    print("\nAnswer:")
-    print(result_without_lcel)
+    # print("\n" + "=" * 70)
+    # print("IMPLEMENTATION 1: Without LCEL")
+    # print("=" * 70)
+    # result_without_lcel = retrieval_chain_without_lcel(query)
+    # print("\nAnswer:")
+    # print(result_without_lcel)
 
+    # ========================================================================
+    # Option 2: Use implementation WITH LCEL
+    # ========================================================================
+    print("\n" + "=" * 70)
+    print("IMPLEMENTATION 2: With LCEL")
+    print("=" * 70)
+    # initializing the runnable chain
+    chain_with_retrieval = create_retrieval_chain_with_lcel()
+    result_with_lcel = chain_with_retrieval.invoke({"question":query})
+    print("\nAnswer:")
+    print(result_with_lcel)
 
 
 if __name__ == "__main__":
